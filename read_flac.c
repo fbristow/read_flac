@@ -2,12 +2,25 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <endian.h>
 #include <assert.h>
+#include <endian.h>
 
 void parse_file(FILE *f);
 
 typedef unsigned char byte;
+
+typedef struct SEEKPOINT
+{
+    uint64_t first_sample_number;
+    uint64_t offset;
+    uint16_t number_of_samples;
+} seekpoint;
+
+typedef struct METADATA_BLOCK_SEEKTABLE
+{
+    size_t total_points;
+    seekpoint *entry;
+} seektable;
 
 typedef struct METADATA_BLOCK_HEADER
 {
@@ -30,13 +43,26 @@ typedef struct METADATA_BLOCK_STREAMINFO
     uint8_t md5[MD5_SIZE];
 } streaminfo;
 
+typedef struct METADATA_BLOCK 
+{
+    union
+    {
+        streaminfo info;
+    } block;
+    void (*print)(struct METADATA_BLOCK *);
+} metadata_block;
+
 static void parse_metadata_header(metadata_header *, FILE *);
 static void parse_block_streaminfo(streaminfo *, FILE *, size_t);
+static void print_block_streaminfo(streaminfo *);
+static void print_metadata(metadata_block *);
+static void parse_block_seektable(seektable *, FILE *, size_t);
+static void print_block_seektable(seektable *);
 
 int main(int argc, char **argv)
 {
 #define SIG_SIZE 4
-    unsigned char signature[SIG_SIZE];
+    char signature[SIG_SIZE];
     FILE *f = fopen(argv[1], "r");
     fread(signature, sizeof(unsigned char), SIG_SIZE, f);
     if (strncmp("fLaC", signature, SIG_SIZE))
@@ -45,45 +71,60 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
-    metadata_header header;
-    parse_metadata_header(&header, f);
-
-    printf("Last header? %d\n", header.last_block);
-    printf("Block type: %d\n", header.block_type);
-    printf("Block length: %ld\n", header.block_length);
-
-#define STREAMINFO_SIZE 34
-    assert(header.block_length == STREAMINFO_SIZE);
-
-    streaminfo info = {0};
-    parse_block_streaminfo(&info, f, header.block_length);
-
-    printf("min_blocksize: %d\n", info.min_block_size);
-    printf("max_blocksize: %d\n", info.max_block_size);
-    printf("min_frame_size: %d\n", info.min_frame_size);
-    printf("max_frame_size: %d\n", info.max_frame_size);
-    printf("sample_rate: %d\n", info.sample_rate);
-    printf("channels: %d\n", info.channels);
-    printf("bits_per_sample: %d\n", info.bits_per_sample);
-    printf("total_samples: %ld\n", info.total_samples);
-    printf("md5: ");
-    for (uint8_t i = 0; i < MD5_SIZE; i++)
-    {
-        printf("%02x", info.md5[i]);
-    }
-    printf("\n");
-
+    metadata_header header = {0};
     do
     {
         parse_metadata_header(&header, f);
-
         printf("Last header? %d\n", header.last_block);
         printf("Block type: %d\n", header.block_type);
         printf("Block length: %ld\n", header.block_length);
-        fseek(f, header.block_length, SEEK_CUR);
+        if (header.block_type == 3)
+        {
+            seektable table = {0};
+            parse_block_seektable(&table, f, header.block_length);
+            print_block_seektable(&table);
+        }
+        else
+        {
+            fseek(f, header.block_length, SEEK_CUR);
+        }
     } while (!header.last_block);
    
     return EXIT_SUCCESS;
+}
+
+static void parse_block_seektable(seektable *table, FILE *f, size_t size)
+{
+    byte *header = malloc(size);
+    fread(header, sizeof(byte), size, f);
+    // number of seekpoints is exactly size / 18 (from docs)
+    table->total_points = size / sizeof(seekpoint);
+    seekpoint *point = malloc(table->total_points * sizeof(seekpoint));
+    table->entry = point;
+    for (uint8_t i = 0; i < table->total_points; i++)
+    {
+        memcpy(&point[i].first_sample_number, &header[i * 18], 8);
+        memcpy(&point[i].offset, &header[i * 18 + 8], 8);
+        memcpy(&point[i].number_of_samples, &header[i * 18 + 16], 2);
+
+        point[i].first_sample_number = be64toh(point[i].first_sample_number);
+        point[i].offset = be64toh(point[i].offset);
+        point[i].number_of_samples = be16toh(point[i].number_of_samples);
+    }
+    
+    free(header);
+}
+
+static void print_block_seektable(seektable *table)
+{
+    for (size_t i = 0; i < table->total_points; i++)
+    {
+        printf("    point %ld: sample_number=%lu, stream_offset=%lu, frame_samples=%u\n",
+                i,
+                table->entry[i].first_sample_number,
+                table->entry[i].offset,
+                table->entry[i].number_of_samples);
+    }
 }
 
 static void parse_metadata_header(metadata_header *h, FILE *f)
@@ -119,4 +160,22 @@ static void parse_block_streaminfo(streaminfo *h, FILE *f, size_t size)
     memcpy(h->md5, &header[18], MD5_SIZE);
 
     free(header);
+}
+
+static void print_block_streaminfo(streaminfo *info)
+{
+    printf("min_blocksize: %d\n", info->min_block_size);
+    printf("max_blocksize: %d\n", info->max_block_size);
+    printf("min_frame_size: %d\n", info->min_frame_size);
+    printf("max_frame_size: %d\n", info->max_frame_size);
+    printf("sample_rate: %d\n", info->sample_rate);
+    printf("channels: %d\n", info->channels);
+    printf("bits_per_sample: %d\n", info->bits_per_sample);
+    printf("total_samples: %ld\n", info->total_samples);
+    printf("md5: ");
+    for (uint8_t i = 0; i < MD5_SIZE; i++)
+    {
+        printf("%02x", info->md5[i]);
+    }
+    printf("\n");
 }
