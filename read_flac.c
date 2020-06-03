@@ -9,6 +9,14 @@ void parse_file(FILE *f);
 
 typedef unsigned char byte;
 
+typedef struct VORBIS_COMMENT
+{
+    uint32_t vendor_length;
+    char *vendor_string;
+    uint32_t comment_list_length;
+    char **comments;
+} vorbis_comment;
+
 typedef struct SEEKPOINT
 {
     uint64_t first_sample_number;
@@ -58,6 +66,8 @@ static void print_block_streaminfo(streaminfo *);
 static void print_metadata(metadata_block *);
 static void parse_block_seektable(seektable *, FILE *, size_t);
 static void print_block_seektable(seektable *);
+static void parse_vorbis_comment(vorbis_comment *, FILE *, size_t);
+static void print_vorbis_comment(vorbis_comment *);
 
 int main(int argc, char **argv)
 {
@@ -78,11 +88,11 @@ int main(int argc, char **argv)
         printf("Last header? %d\n", header.last_block);
         printf("Block type: %d\n", header.block_type);
         printf("Block length: %ld\n", header.block_length);
-        if (header.block_type == 3)
+        if (header.block_type == 4)
         {
-            seektable table = {0};
-            parse_block_seektable(&table, f, header.block_length);
-            print_block_seektable(&table);
+            vorbis_comment comment = {0};
+            parse_vorbis_comment(&comment, f, header.block_length);
+            print_vorbis_comment(&comment);
         }
         else
         {
@@ -91,6 +101,34 @@ int main(int argc, char **argv)
     } while (!header.last_block);
    
     return EXIT_SUCCESS;
+}
+
+static void print_vorbis_comment(vorbis_comment *comment)
+{
+    printf("Vendor string: %s\n", comment->vendor_string);
+    printf("Comments:\n");
+    for (uint32_t i = 0; i < comment->comment_list_length; i++)
+    {
+        printf("\tcomment[%d]: %s\n", i, comment->comments[i]);
+    }
+}
+
+static void parse_vorbis_comment(vorbis_comment *comment, FILE *f, size_t size)
+{
+    fread(&comment->vendor_length, sizeof(uint32_t), 1, f);
+    comment->vendor_string = malloc(sizeof(char) * comment->vendor_length + 1);
+    fread(comment->vendor_string, sizeof(char), comment->vendor_length, f);
+    comment->vendor_string[comment->vendor_length] = '\0';
+    fread(&comment->comment_list_length, sizeof(uint32_t), 1, f);
+    comment->comments = malloc(sizeof(char*) * comment->comment_list_length);
+    for (uint32_t i = 0; i < comment->comment_list_length; i++)
+    {
+        uint32_t comment_length;
+        fread(&comment_length, sizeof(uint32_t), 1, f);
+        comment->comments[i] = malloc(sizeof(char) * comment_length + 1);
+        fread(comment->comments[i], sizeof(char), comment_length, f);
+        comment->comments[i][comment_length] = '\0';
+    }
 }
 
 static void parse_block_seektable(seektable *table, FILE *f, size_t size)
