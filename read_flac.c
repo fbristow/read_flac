@@ -9,6 +9,19 @@ void parse_file(FILE *f);
 
 typedef unsigned char byte;
 
+typedef struct PICTURE
+{
+    uint32_t picture_type;
+    char *mime_type;
+    char *description;
+    uint32_t width;
+    uint32_t height;
+    uint32_t colour_depth;
+    uint32_t number_of_colours;
+    uint32_t picture_size;
+    byte *picture;
+} picture;
+
 typedef struct VORBIS_COMMENT
 {
     uint32_t vendor_length;
@@ -51,23 +64,25 @@ typedef struct METADATA_BLOCK_STREAMINFO
     uint8_t md5[MD5_SIZE];
 } streaminfo;
 
-typedef struct METADATA_BLOCK 
-{
-    union
-    {
-        streaminfo info;
-    } block;
-    void (*print)(struct METADATA_BLOCK *);
-} metadata_block;
-
 static void parse_metadata_header(metadata_header *, FILE *);
 static void parse_block_streaminfo(streaminfo *, FILE *, size_t);
 static void print_block_streaminfo(streaminfo *);
-static void print_metadata(metadata_block *);
 static void parse_block_seektable(seektable *, FILE *, size_t);
 static void print_block_seektable(seektable *);
 static void parse_vorbis_comment(vorbis_comment *, FILE *, size_t);
 static void print_vorbis_comment(vorbis_comment *);
+static void parse_picture(picture *, FILE *, size_t);
+static void print_picture(picture *);
+
+char *block_types[7] = {
+     "STREAMINFO",
+     "PADDING",
+     "APPLICATION",
+     "SEEKTABLE",
+     "VORBIS_COMMENT",
+     "CUESHEET",
+     "PICTURE"
+};
 
 int main(int argc, char **argv)
 {
@@ -86,13 +101,13 @@ int main(int argc, char **argv)
     {
         parse_metadata_header(&header, f);
         printf("Last header? %d\n", header.last_block);
-        printf("Block type: %d\n", header.block_type);
+        printf("Block type: %s\n", block_types[header.block_type]);
         printf("Block length: %ld\n", header.block_length);
-        if (header.block_type == 4)
+        if (header.block_type == 6)
         {
-            vorbis_comment comment = {0};
-            parse_vorbis_comment(&comment, f, header.block_length);
-            print_vorbis_comment(&comment);
+            picture picture = {0};
+            parse_picture(&picture, f, header.block_length);
+            print_picture(&picture);
         }
         else
         {
@@ -101,6 +116,51 @@ int main(int argc, char **argv)
     } while (!header.last_block);
    
     return EXIT_SUCCESS;
+}
+
+static void print_picture(picture *p)
+{
+    printf("Picture type %d\n", p->picture_type);
+    printf("MIME type: %s\n", p->mime_type);
+    printf("Description: %s\n", p->description);
+    printf("Width: %d\n", p->width);
+    printf("Height: %d\n", p->height);
+    printf("Colour depth: %d\n", p->colour_depth);
+    printf("Number of colours: %d\n", p->number_of_colours);
+    for (uint32_t i = 0; i < p->picture_size; i++)
+    {
+        printf("%02x ", p->picture[i]);
+        if ((i + 1) % 30 == 0 ) printf("\n");
+    }
+    printf("\n");
+}
+
+static void parse_picture(picture *p, FILE *f, size_t size)
+{
+    uint32_t mime_type_len, desc_len;
+    fread(&p->picture_type, sizeof(uint32_t), 1, f);
+    p->picture_type = be32toh(p->picture_type);
+    fread(&mime_type_len, sizeof(uint32_t), 1, f);
+    mime_type_len = be32toh(mime_type_len);
+    p->mime_type = malloc(sizeof(char) * mime_type_len + 1);
+    fread(p->mime_type, sizeof(char), mime_type_len, f);
+    p->mime_type[mime_type_len] = '\0';
+    fread(&desc_len, sizeof(uint32_t), 1, f);
+    desc_len = be32toh(desc_len);
+    p->description = malloc(sizeof(char) * desc_len + 1);
+    fread(p->description, sizeof(char), desc_len, f);
+    fread(&p->width, sizeof(uint32_t), 1, f);
+    p->width = be32toh(p->width);
+    fread(&p->height, sizeof(uint32_t), 1, f);
+    p->height = be32toh(p->height);
+    fread(&p->colour_depth, sizeof(uint32_t), 1, f);
+    p->colour_depth = be32toh(p->colour_depth);
+    fread(&p->number_of_colours, sizeof(uint32_t), 1, f);
+    p->number_of_colours = be32toh(p->number_of_colours);
+    fread(&p->picture_size, sizeof(uint32_t), 1, f);
+    p->picture_size = be32toh(p->picture_size);
+    p->picture = malloc(sizeof(byte) * p->picture_size);
+    fread(p->picture, sizeof(byte), p->picture_size, f);
 }
 
 static void print_vorbis_comment(vorbis_comment *comment)
