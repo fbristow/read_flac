@@ -73,6 +73,7 @@ static void parse_vorbis_comment(vorbis_comment *, FILE *, size_t);
 static void print_vorbis_comment(vorbis_comment *);
 static void parse_picture(picture *, FILE *, size_t);
 static void print_picture(picture *);
+static void check_padding(FILE *, size_t);
 
 char *block_types[7] = {
      "STREAMINFO",
@@ -103,11 +104,9 @@ int main(int argc, char **argv)
         printf("Last header? %d\n", header.last_block);
         printf("Block type: %s\n", block_types[header.block_type]);
         printf("Block length: %ld\n", header.block_length);
-        if (header.block_type == 6)
+        if (header.block_type == 1)
         {
-            picture picture = {0};
-            parse_picture(&picture, f, header.block_length);
-            print_picture(&picture);
+            check_padding(f, header.block_length);
         }
         else
         {
@@ -116,6 +115,16 @@ int main(int argc, char **argv)
     } while (!header.last_block);
    
     return EXIT_SUCCESS;
+}
+
+static void check_padding(FILE *f, size_t size)
+{
+    for (size_t i = 0 ; i < size; i++)
+    {
+        uint8_t b;
+        fread(&b, sizeof(uint8_t), 1, f);
+        assert(!b); // all bits must be 0
+    }
 }
 
 static void print_picture(picture *p)
